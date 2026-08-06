@@ -225,6 +225,23 @@ check("unc fallback", cands[2], "\\\\wsl$\\Ubuntu-22.04\\home\\me\\.bashrc")
 truthy("snippet has osc7", wi._test.INTEGRATION_SCRIPT:find("]7;file://") ~= nil)
 truthy("snippet publishes shell id", wi._test.INTEGRATION_SCRIPT:find("SetUserVar=resurrect_shell_id") ~= nil)
 
+----------------------------------------------------------- window_state
+-- The window a restore starts from was spawned before anything was known about
+-- what it would hold, so it runs default_prog. Reusing it for a saved tab from
+-- another domain gives a pane that is not the shell it claims to be.
+local can_reuse = resurrect.window_state._test.can_reuse_tab
+local function fake_pane(domain)
+	return { get_domain_name = function() return domain end }
+end
+check("reuse a local tab for a local tab", can_reuse(fake_pane("local"), { domain = "local" }), true)
+check("never reuse a local tab for WSL", can_reuse(fake_pane("local"), { domain = "WSL:Ubuntu-22.04" }), false)
+check("never reuse a WSL tab for local", can_reuse(fake_pane("WSL:Ubuntu-22.04"), { domain = "local" }), false)
+check("reuse matching WSL domains", can_reuse(fake_pane("WSL:Ubuntu"), { domain = "WSL:Ubuntu" }), true)
+check("never reuse across distros", can_reuse(fake_pane("WSL:Ubuntu"), { domain = "WSL:Debian" }), false)
+-- Older states recorded no domain; reuse stays as it was rather than spawning.
+check("reuse when nothing was recorded", can_reuse(fake_pane("local"), {}), true)
+check("reuse when there is no pane", can_reuse(nil, { domain = "WSL:Ubuntu" }), true)
+
 -------------------------------------------------------- window_geometry
 local geom = resurrect.window_geometry
 check("geometry is opt-in", geom.enabled, false)
@@ -240,8 +257,15 @@ truthy("geometry script caches its assembly", geom._test.SCRIPT:find("OutputAsse
 truthy("geometry never sets a size", not geom._test.SCRIPT:find("set_inner_size"))
 
 -- apply() is all best-effort: none of it should throw on a window that has gone.
+-- It is also safe to call from here: these run with no GUI window of their own,
+-- and apply() declines unless this process owns exactly one -- so a test can
+-- never reposition a WezTerm window belonging to somebody else.
 truthy("apply tolerates nil geometry", pcall(geom.apply, nil, nil))
 truthy("apply tolerates a dead window", pcall(geom.apply, nil, { x = 1, y = 2, maximized = true }))
+truthy(
+	"apply is inert without a window of our own",
+	pcall(geom.apply, nil, { x = 1, y = 2, outer_width = 800, outer_height = 600, maximized = true })
+)
 
 -- Saves that do not pay for a capture must still carry the last geometry seen,
 -- or opening a tab would erase the position the last periodic save recorded.
